@@ -21,7 +21,7 @@ class CreditsTracker {
         let stored = {};
         try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { stored = {}; }
         stored = this._migrateFromCredits(stored);
-        this.settings = { ...DEFAULT_SETTINGS, ...stored, workDays: BUSINESS_DAYS };
+        this.settings = this._sanitize({ ...DEFAULT_SETTINGS, ...stored, workDays: BUSINESS_DAYS });
         this.stats = this.calculateStats();
         this._rolloverIfNeeded();
         this.initElements();
@@ -37,20 +37,43 @@ class CreditsTracker {
         if (!(stored.quota > 0)) {
             delete stored.quota;
             delete stored.plan;
-            // Whole percentages only: round anything saved with decimals by earlier builds.
-            if (typeof stored.usage === 'number') stored.usage = Math.round(stored.usage);
-            if (Array.isArray(stored.history)) {
-                stored.history = stored.history.map(h => ({ ...h, value: Math.round(h.value) }));
-            }
-            return stored;
+            return stored; // whole-% rounding of older decimals happens in _sanitize
         }
         const q = stored.quota;
-        const pct = v => Math.round((v / q) * 100);
+        const pct = v => Math.round((Number(v) / q) * 100);
         stored.usage = pct(stored.usage || 0);
-        stored.history = (stored.history || []).map(h => ({ ...h, value: pct(h.value) }));
+        stored.history = (Array.isArray(stored.history) ? stored.history : [])
+            .filter(h => h && typeof h === 'object')
+            .map(h => ({ ...h, value: pct(h.value) }));
         delete stored.quota;
         delete stored.plan;
         return stored;
+    }
+
+    /**
+     * localStorage is shared by every app on this Pages origin and can hold anything, so never trust its
+     * shape: coerce each field to a safe type/range before it reaches the DOM or the date math.
+     */
+    _sanitize(s) {
+        const whole = (v, min, fallback) => (Number.isFinite(v) && v >= min ? Math.round(v) : fallback);
+        const hhmm = (v, fallback) => (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : fallback);
+        s.usage = whole(s.usage, 0, 0);
+        s.resetDay = Math.min(28, whole(s.resetDay, 1, DEFAULT_SETTINGS.resetDay));
+        s.resetTime = hhmm(s.resetTime, DEFAULT_SETTINGS.resetTime);
+        s.workStart = hhmm(s.workStart, DEFAULT_SETTINGS.workStart);
+        s.workEnd = hhmm(s.workEnd, DEFAULT_SETTINGS.workEnd);
+        if (CreditsLogic.parseHM(s.workEnd) <= CreditsLogic.parseHM(s.workStart)) {
+            s.workStart = DEFAULT_SETTINGS.workStart;
+            s.workEnd = DEFAULT_SETTINGS.workEnd;
+        }
+        s.darkMode = s.darkMode !== false;
+        s.usageCycle = typeof s.usageCycle === 'string' && !Number.isNaN(Date.parse(s.usageCycle)) ? s.usageCycle : null;
+        s.history = (Array.isArray(s.history) ? s.history : [])
+            .filter(h => h && typeof h.cycle === 'string' && !Number.isNaN(Date.parse(h.cycle))
+                && Number.isInteger(h.dayIndex) && h.dayIndex >= 0 && h.dayIndex < 40
+                && Number.isFinite(h.value) && h.value >= 0)
+            .map(h => ({ cycle: h.cycle, dayIndex: h.dayIndex, value: Math.round(h.value) }));
+        return s;
     }
 
     // ---------- config helpers ----------
@@ -342,11 +365,12 @@ class CreditsTracker {
             const dateLabel = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
             const isToday = i === current;
             const isFuture = i > current;
+            const shown = entry && Number.isFinite(Number(entry.value)) ? Number(entry.value) : '';
             const row = document.createElement('div');
             row.className = 'flex items-center gap-3';
             row.innerHTML = `
                 <span class="text-xs ${isToday ? 'text-accent font-semibold' : 'text-muted'} w-32 shrink-0">D${i + 1} · ${dateLabel}${isToday ? ' ◀' : ''}</span>
-                <input type="number" min="0" step="1" value="${entry ? entry.value : ''}" placeholder="—"
+                <input type="number" min="0" step="1" value="${shown}" placeholder="—"
                        data-day-index="${i}"
                        class="history-edit-input field w-24 p-1 text-sm text-right disabled:opacity-40"
                        ${isFuture ? 'disabled' : ''}>
