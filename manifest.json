@@ -1,0 +1,17 @@
+{
+  "name": "GitHub Credits Tracker",
+  "short_name": "GHCredits",
+  "description": "Acompanhamento do uso mensal de créditos do GitHub Copilot",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
